@@ -375,6 +375,50 @@ class OpenSSL::TestX509Certificate < OpenSSL::TestCase
     assert_equal 7, seq.value.size
   end
 
+  def test_freeze
+    cert = issue_cert(@ca, @rsa1, 1, [], nil, nil)
+    cert.freeze
+
+    assert_raise(FrozenError) { cert.version = 3 }
+    assert_raise(FrozenError) { cert.serial = 2 }
+    assert_raise(FrozenError) { cert.subject = @ca }
+    assert_raise(FrozenError) { cert.issuer = @ca }
+    assert_raise(FrozenError) { cert.not_before = Time.now }
+    assert_raise(FrozenError) { cert.not_after = Time.now + 3600 }
+    assert_raise(FrozenError) { cert.public_key = @rsa1 }
+    assert_raise(FrozenError) { cert.sign(@rsa1, "sha256") }
+    assert_raise(FrozenError) { cert.extensions = [] }
+    assert_raise(FrozenError) { cert.add_extension(OpenSSL::X509::Extension.new("basicConstraints", "CA:FALSE", true)) }
+  end
+
+  if defined?(Ractor) && respond_to?(:ractor)
+    unless Ractor.method_defined?(:value) # Ruby 3.4 or earlier
+      using Module.new {
+        refine Ractor do
+          alias value take
+        end
+      }
+    end
+
+    ractor
+    def test_ractor
+      cert = issue_cert(@ca, @rsa1, 1, [], nil, nil)
+
+      # test if shareable when frozen
+      assert Ractor.shareable?(cert.freeze)
+      shared_cert = Ractor.make_shareable(cert)
+      # read fields from another Ractor on shared cert
+      assert_equal(shared_cert.version, Ractor.new(shared_cert) { |c| c.version }.value)
+      assert_equal(shared_cert.serial, Ractor.new(shared_cert) { |c| c.serial }.value)
+      assert_equal(shared_cert.signature_algorithm, Ractor.new(shared_cert) { |c| c.signature_algorithm }.value)
+      assert_equal(shared_cert.subject.to_s, Ractor.new(shared_cert) { |c| c.subject.to_s }.value)
+      assert_equal(shared_cert.issuer.to_s, Ractor.new(shared_cert) { |c| c.issuer.to_s }.value)
+      assert_equal(shared_cert.not_before, Ractor.new(shared_cert) { |c| c.not_before }.value)
+      assert_equal(shared_cert.not_after, Ractor.new(shared_cert) { |c| c.not_after }.value)
+      assert_equal(shared_cert.to_der, Ractor.new(shared_cert) { |c| c.to_der }.value)
+    end
+  end
+
   private
 
   def certificate_error_returns_false
